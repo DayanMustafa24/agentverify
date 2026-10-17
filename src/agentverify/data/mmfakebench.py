@@ -35,7 +35,10 @@ def _json_path(root: Path, split: str) -> Path:
 
 def _resolve_image(root: Path, split: str, rel: str) -> str:
     base = root / f"MMFakeBench_{split}"
-    for cand in (base / rel, base / "source" / rel, root / rel, Path(rel)):
+    # json stores paths like "\real\bbc_val_50\BBC_val_0.png"; a leading slash makes
+    # pathlib discard `base`, so strip it and use forward slashes.
+    rel = rel.replace("\\", "/").lstrip("/")
+    for cand in (base / rel, base / "source" / rel, root / rel):
         if cand.exists():
             return str(cand)
     return str(base / rel)  # may not exist; caller can check
