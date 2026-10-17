@@ -1,8 +1,7 @@
 # AgentVerify (Phase 1: technical foundation and baselines)
 
 Agentic multimodal fake news detection from text and images.
-Course: Agentic AI. Project code / title / members: **fill in before submitting**.
-
+Course: Agentic AI
 Phase 1 delivers the data pipeline, shared contracts, model provider layer, evidence-tool
 interface, perturbation utilities, evaluation code (accuracy, macro-F1, ECE, Brier, risk-coverage,
 cost) and two non-agentic baselines. The agents themselves (text, image, evidence, decision) come in Phase 2.
