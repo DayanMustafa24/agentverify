@@ -1,0 +1,37 @@
+{
+  "n": 24,
+  "parse_fail_rate": 0.0,
+  "binary": {
+    "accuracy": 0.5416666666666666,
+    "macro_f1": 0.4666666666666667,
+    "per_class_recall": {
+      "real": 0.3333333333333333,
+      "fake": 0.6111111111111112
+    },
+    "fake_precision": 0.7333333333333333
+  },
+  "four_way": {
+    "accuracy": 0.25,
+    "macro_f1": 0.24365079365079365,
+    "per_class_recall": {
+      "real": 0.3333333333333333,
+      "text_false": 0.3333333333333333,
+      "image_false": 0.16666666666666666,
+      "mismatch": 0.16666666666666666
+    }
+  },
+  "calibration": {
+    "ece_15bins": 0.2880849574855068,
+    "brier": 0.2881748376982969,
+    "aurc": 0.5116823070888221,
+    "selective_acc_at_80_coverage": 0.5,
+    "mean_confidence": 0.6662134783746109
+  },
+  "cost": {
+    "prompt_tokens_per_post": 0.0,
+    "completion_tokens_per_post": 0.0,
+    "latency_s_per_post": 0.0,
+    "llm_calls_per_post": 0.0,
+    "search_calls_per_post": 0.0
+  }
+}

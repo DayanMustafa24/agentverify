@@ -77,6 +77,7 @@ class OpenAICompatClient:
                               {"role": "user", "content": content}],
                 )
             except Exception as e:  # network / rate limit
+                print(f"[llm error] {type(e).__name__}: {str(e)[:300]}", flush=True)
                 time.sleep(2 ** attempt)
                 if attempt == self.cfg.retries:
                     cost.llm_calls += 1

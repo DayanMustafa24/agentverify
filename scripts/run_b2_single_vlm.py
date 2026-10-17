@@ -18,11 +18,25 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--root", required=True)
 ap.add_argument("--split", default="val")
 ap.add_argument("--limit", type=int, default=None)
+ap.add_argument("--sample", type=int, default=None,
+                help="random stratified subset of N posts (seed 42); use instead of --limit")
 ap.add_argument("--provider", choices=["openai", "mock"], default="openai")
 ap.add_argument("--out", required=True)
 args = ap.parse_args()
 
-posts = get_posts(args.root, args.split, limit=args.limit)
+posts = get_posts(args.root, args.split, limit=None if args.sample else args.limit)
+if args.sample:
+    import random
+    from collections import defaultdict
+    rng = random.Random(42)
+    groups = defaultdict(list)
+    for p in posts:
+        groups[p.gold_source.value].append(p)
+    picked = []
+    for g in groups.values():
+        k = max(1, round(args.sample * len(g) / len(posts)))
+        picked += rng.sample(g, min(k, len(g)))
+    posts = picked
 client = OpenAICompatClient() if args.provider == "openai" else MockClient()
 recs = [run_b2(p, client) for p in tqdm(posts)]
 write_records(args.out, recs)
