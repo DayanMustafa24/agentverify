@@ -1,0 +1,16 @@
+# data: MMFakeBench licence forbids redistribution, never commit raw data
+data/raw/
+data/cache/
+*.zip
+# secrets
+.env
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+# results: keep only small summary files
+results/*
+!results/.gitkeep
+!results/smoke/
