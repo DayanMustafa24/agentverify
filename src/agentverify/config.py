@@ -1,7 +1,9 @@
-"""Tiny env-based config. Copy .env.example to .env and export it."""
+
+"""Tiny env-based config. Copy .env.example to .env."""
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
 from dataclasses import dataclass
 
 
@@ -16,6 +18,7 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
+        load_dotenv()
         return cls(
             model=os.getenv("AV_MODEL", "gpt-4o-mini"),
             base_url=os.getenv("OPENAI_BASE_URL") or None,
