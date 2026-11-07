@@ -1,173 +1,181 @@
-# AgentVerify (Phase 2: calibrated, evidence-grounded multi-agent fake-news detection)
+# AgentVerify: agentic multimodal fake-news detection from text and images
 
-Agentic multimodal fake news detection from text and images.
-Course: AI4015 Agentic AI. Project code G1-12. Supervisor: Muhammad Sajjad.
+AI4015 Agentic AI, Phase 2. Project code **G1-12**. Supervisor: Muhammad Sajjad.
+Base paper: T2Agent (AAAI 2026). Benchmark: MMFakeBench (text + image posts, 4 classes: real, text_false, image_false, mismatch).
 
-Phase 1 delivered the data pipeline, shared contracts, model provider layer, evidence-tool
-interface, perturbation utilities, evaluation code (accuracy, macro-F1, ECE, Brier, risk-coverage,
-cost) and two non-agentic baselines. Phase 2 builds the four agents (text, image, evidence, decision),
-the calibration layer, the robustness suite and the ablation runs on top of that foundation.
+AgentVerify replaces a single fixed classifier with four cooperating agents: a **text agent** (reads the caption), an **image agent**
+(manipulation and caption-image consistency), an **evidence agent** (Wikipedia + web retrieval, judges the claim against the sources) and a
+**decision agent** (fuses the reports into a verdict, a 4-way label, a confidence and a short explanation). A calibration layer rescales the
+confidence, and every agent can be switched off for ablation.
 
 ![architecture](docs/architecture.png)
 
-| Baseline | What it is |
-|---|---|
-| B1 | Frozen CLIP embeddings + logistic regression |
-| B2 | One vision-language-model call per post, no tools, no agents |
-| B3 | Base paper (T2Agent) / MMD-Agent, compared through published numbers on the MMFakeBench val set (not re-run by us) |
+## Headline result (honest summary)
+On a stratified 150-post sample of the official MMFakeBench validation set, the four-agent system matched, but did not beat, the single-VLM
+baseline (B2) and a CLIP + logistic-regression classifier trained on 2,000 benchmark posts (B1). 4-way macro-F1 was 0.672 (agents), 0.667 (B2)
+and 0.752 (B1); the paired bootstrap difference between the agents and B1 is -0.080 (95% CI [-0.193, 0.035]), so the three are statistically
+indistinguishable at this sample size. The agents used about 1.9x B2's tokens and 2.9x its latency. The image agent carries most of the signal,
+the text agent adds a small 4-way gain, and the evidence agent and Platt calibration showed no measurable benefit. Under caption typos the full
+system changed its binary verdict more often than B2 (20% vs 5% of 60 posts).
 
-## Changes since Phase 1
-
+## 0. Changes since Phase 1
 | Item | Phase 1 proposal | Now | Reason |
 |---|---|---|---|
-| B2 backbone | Gemini 2.5 Flash | `gemini-3.5-flash-lite` via Google AI Studio (OpenAI-compatible endpoint) | TODO: state the real reason (availability / free-tier quota) |
-| B2 evaluation set | 1,000 official val posts | 60-post stratified val sample (seed 42); full-val run pending | free-tier rate limits (one 429 and one 503 seen) |
-| B1 protocol | trained on D_train (2,000 posts from test) | Phase 1 numbers use 700 val / 300 val (val only; test set not yet downloaded) | test set not downloaded in Phase 1; **to be re-run on D_train with no overlap with D_val** |
-| Work division | "Worked locally" | see Section 7 | TA feedback |
+| Backbone | GPT-4o-mini and Qwen2.5-VL-7B (Gemini 2.5 Flash used for the first B2 run) | `gemini-3.5-flash-lite` via Google AI Studio (OpenAI-compatible endpoint) for B2 and all agents | Gemini 2.5 Flash showed 20 requests/day on our free tier (5 RPM); 3.5 Flash-Lite showed 500 requests/day (15 RPM). No paid API was used. |
+| B2 | 60-post sample, Gemini 2.5 Flash | re-run on the same 150 posts as the agents, with the same model | all methods must share backbone and evaluation set |
+| B1 | 700 / 300 split of val (Phase 1 preliminary, superseded) | trained on D_train (2,000 test-derived posts), evaluated on the same 150 val posts | removes the train/val overlap raised in TA feedback |
+| Evaluation size | full val (1,000) | 150 stratified val posts (seed 42); calibration set 60 stratified test-split posts | free-tier request limits |
+| Repeated runs | 3 runs, mean and std | not done | temperature 0 plus a disk cache makes repeats identical; we report bootstrap 95% CIs over posts instead |
+| T2Agent comparison on GPT-4o-mini | small subset planned | not done (no paid API) | stated as a limitation |
+| Robustness (Gap 2) | perturbation suite | see Section 6 (status in the gap table) | |
 
-The base paper (T2Agent) and Gaps 1-3 are unchanged.
+The base paper and Gaps 1-3 are unchanged.
 
 ## 1. Setup
-```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-pip install -e ".[clip]"        # only needed for B1 (torch + transformers)
-cp .env.example .env            # then put your key in .env and export it
-```
-Any OpenAI-compatible endpoint works. For a free local run use Ollama and set
-`OPENAI_BASE_URL=http://localhost:11434/v1`, `OPENAI_API_KEY=ollama`, `AV_MODEL=qwen2.5vl:7b`.
-
-To reproduce the reported B2 run, use the Gemini OpenAI-compatible endpoint
-(never commit your key; set it only in your shell or in `.env`, which is git-ignored):
 ```powershell
-$env:OPENAI_API_KEY="YOUR_KEY"
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[dev]"
+pip install -e ".[clip]"          # only for B1 (torch + transformers)
+$env:PYTHONUTF8="1"               # Windows: avoids cp1252 encoding errors when writing jsonl
+```
+Configuration is read from **environment variables** (the code does not load `.env` by itself). Set them in the same shell:
+```powershell
+$env:OPENAI_API_KEY="YOUR_KEY"                    # never commit a key
 $env:OPENAI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/"
-$env:AV_MODEL="gemini-3.5-flash-lite"
+$env:AV_MODEL="gemini-3.5-flash-lite"             # exact model id shown in Google AI Studio
+$env:AV_TEMPERATURE="0"
 ```
-Note: B2 sends val images and captions to an external service (Google AI Studio free tier).
+Any OpenAI-compatible endpoint works (OpenAI, Ollama, vLLM). `.env.example` lists the variable names.
+Note: with the hosted API, validation images and captions are sent to an external service (Google AI Studio free tier).
 
-## 2. Get the data (MMFakeBench, gated)
-1. Open https://huggingface.co/datasets/liuxuannan/MMFakeBench, log in, accept the usage terms.
-2. Download and unzip so you have `data/raw/MMFakeBench/MMFakeBench_val/` and `.../MMFakeBench_test/`.
-3. **Never commit the data** (licence forbids redistribution; `data/raw/` is git-ignored).
-```bash
-python scripts/inspect_dataset.py --root data/raw/MMFakeBench   # check labels + images exist
-python scripts/make_splits.py   --root data/raw/MMFakeBench     # writes id lists to data/splits/
+## 2. Data (MMFakeBench, gated)
+1. Open https://huggingface.co/datasets/liuxuannan/MMFakeBench, log in, accept the terms.
+2. Unzip to `data/raw/MMFakeBench/MMFakeBench_val/` and `data/raw/MMFakeBench/MMFakeBench_test/` (each with `source/`, `real/`, `fake/`).
+3. The licence forbids redistribution: **raw data is never committed**.
+```powershell
+python scripts/inspect_dataset.py --root data/raw/MMFakeBench
+python scripts/make_splits.py   --root data/raw/MMFakeBench      # id lists in data/splits/
 ```
-If `inspect_dataset.py` reports an unknown `fake_cls` string, extend `normalize_source()` in
-`src/agentverify/data/mmfakebench.py`.
-
-Planned splits (stratified, seed 42, stored as id lists only):
-
-| Split | Size | Use |
+| Split | Source | Use |
 |---|---|---|
-| D_val | 1,000 (official val) | main results, comparison with T2Agent and MIRAGE |
-| D_train | 2,000 from test | fit B1 only |
-| D_cal | 1,000 from test | fit the calibrator (Gap 1) |
-| D_test | 2,000 from test | final held-out evaluation |
-| D_rob | 300 from test | perturbation runs (Gap 2) |
+| D_val | official val (1,000) | main evaluation (150-post stratified sample, seed 42) |
+| D_train | 2,000 test-derived | fits B1 only |
+| D_cal | test-derived | calibration (we sample 60 stratified test-split posts, so it never overlaps D_val) |
+| D_rob | 300 test-derived | perturbation study |
 
-Phase 1 baseline runs used only the validation set (test set not yet downloaded). See "Changes since Phase 1".
-
-## 3. Verify the install (no key, no data needed)
-```bash
-pytest -q                       # 15 passed
+## 2b. Verify the install (no key, no data)
+```powershell
+pytest -q
 python scripts/smoke_test.py
+python scripts/smoke_agents.py
 ```
-Smoke-test numbers use a mock model and are **not** results.
+These use a mock model; their outputs are **not** results.
 
-## 4. Run the baselines
-```bash
-python scripts/run_b2_single_vlm.py --root data/raw/MMFakeBench --split val --sample 4  --out results/b2_test.jsonl    # quick diagnostic (checks parse_fail and API errors)
-python scripts/run_b2_single_vlm.py --root data/raw/MMFakeBench --split val --sample 60 --out results/b2_val60.jsonl   # reported run
-python scripts/run_b1_clip_valonly.py --root data/raw/MMFakeBench                                                      # reported B1 run (700 train / 300 eval, val only)
+## 3. Reproduce the experiments
+Runs are cached on disk (`data/cache/`) and resumable. Three members run one shard each (`0/3`, `1/3`, `2/3`) with their own key.
+```powershell
+# calibration set (full config only), then evaluation (B2, full system, three ablations)
+python scripts/run_agent.py --root data/raw/MMFakeBench --role cal  --n 60  --shard 0/3 --configs full
+python scripts/run_agent.py --root data/raw/MMFakeBench --role eval --n 150 --shard 0/3 --configs b2 full no_text no_image no_evidence
+# repeat with --shard 1/3 and --shard 2/3, put the three results/agent/shardN folders together, then:
+python scripts/merge_eval.py --shards results/agent/shard0 results/agent/shard1 results/agent/shard2   # -> results/agent/merged/summary.csv
+python scripts/b1_on_eval_set.py --root data/raw/MMFakeBench --n 150                                   # B1 on the same 150 posts
+python scripts/bootstrap_compare.py                                                                    # -> results/agent/bootstrap.csv
+python scripts/failure_analysis.py                                                                     # -> failure_categories.csv, failure_cases.md
+# robustness (Gap 2)
+python scripts/run_robustness.py --root data/raw/MMFakeBench --n 60 --shard 0/3 --save-examples 10
+python scripts/merge_robust.py --shards results/robust/shard0 results/robust/shard1 results/robust/shard2
 ```
-<!-- TODO: confirm the exact B1 arguments/output path, and whether run_b1_clip.py is still used. -->
-Each run writes `*.jsonl` (one RunRecord per post), `*_metrics.json` and `*_reliability.png`.
-Parse failures are counted as wrong and reported as `parse_fail_rate`.
-A B2 run is only valid if `parse_fail_rate` is close to 0. Look for `[llm error]` lines in the
-console output (404 = wrong model id, 401/403 = bad key, 429 = rate limit, 503 = temporary overload).
-A 4-post diagnostic run is not a result and must not be reported.
+`--max-calls` (default 450) stops a run before the daily request quota; rerun the same command later and cached calls are skipped.
 
-## 4b. Baseline results (MMFakeBench official val)
+**Exact reproduction without any API calls.** Web search results change over time, so we provide a snapshot of the caches:
+Download `cache_snapshot.zip` from the GitHub Releases page for this repository., unzip it into `data/cache/`, and rerun the commands with the same
+model id; every call is served from the cache. Experiment map: E1 = B1 and B2 rows, E2 = published T2Agent numbers (not re-run), E3 = `full`,
+E4 = gap table (calibration: `full_cal`; robustness: `results/robust`), E5 = `no_*` rows, E6 = cost columns.
 
-| Method | n | Binary acc | Binary macro-F1 | 4-way acc | 4-way macro-F1 | ECE (15 bins) | Brier | Parse-fail |
-|---|---|---|---|---|---|---|---|---|
-| B1 CLIP + LR | 300 (held-out val) | 0.817 | 0.785 (95% CI 0.731-0.832) | 0.737 | 0.735 | 0.103 (CI 0.075-0.144) | 0.144 | 0.000 |
-| B2 Gemini 3.5 Flash-Lite, single call | 60 (val sample) | 0.900 | 0.888 (95% CI 0.795-0.964) | 0.733 | 0.717 | 0.060 (CI 0.021-0.140) | 0.083 | 0.000 |
-| B3 T2Agent (GPT-4o-mini), **taken from the paper, not run by us** | 1,000 | n/a | 0.631 | n/a | n/a | not reported | not reported | n/a |
+## 4. Results (150 stratified val posts, one run, temperature 0)
+| Config | n | Bin. acc | Bin. macro-F1 | 4-way macro-F1 | ECE | Brier | Tokens/post | LLM calls | Latency (s) |
+|---|---|---|---|---|---|---|---|---|---|
+| B1 CLIP + LR (D_train) | 150 | 0.847 | 0.828 | 0.752 | 0.107 | 0.136 | n/a | 0 | n/a |
+| B2 single VLM | 150 | 0.867 | 0.850 | 0.667 | 0.096 | 0.120 | 1361 | 1.0 | 3.4 |
+| Full system | 150 | 0.847 | 0.827 | 0.672 | 0.102 | 0.133 | 2558 | 4.97 | 9.8 |
+| no text agent | 150 | 0.853 | 0.837 | 0.637 | 0.103 | 0.131 | 2332 | 3.99 | 7.5 |
+| no image agent | 150 | 0.593 | 0.592 | 0.344 | 0.318 | 0.328 | 1204 | 3.99 | 7.4 |
+| no evidence agent | 150 | 0.853 | 0.828 | 0.656 | 0.077 | 0.122 | 1915 | 3.0 | 6.5 |
+| Full + Platt calibration | 150 | 0.847 | 0.827 | 0.672 | 0.106 | 0.132 | 2558 | 4.97 | 9.8 |
 
-B1 (300 posts), B2 (60 posts) and B3 (1,000 posts) were evaluated on different subsets, so the rows are
-**not directly comparable**. T2Agent uses a different backbone (GPT-4o-mini) than ours; this is a limitation
-of the comparison. B2's n=60 gives wide confidence intervals, so treat it as a baseline reference only.
-Full detail and the B2 run history (including one invalid run that was discarded) are in `results/Result.md`.
+Search calls per post: 1.76 for the full system. The ablation rows show fewer search calls only because searches were already cached when they ran.
+Source: `results/agent/merged/summary.csv`. T2Agent's published 4-way macro-F1 of 0.631 (GPT-4o-mini, full val set) is **taken from the paper, not reproduced**;
+backbone and sample differ, so it is an indicative reference only.
 
-**B2 detail.** Binary recall real / fake 0.944 / 0.881, fake precision 0.974. 4-way recall:
-real 0.944, text_false 0.667, image_false 0.833, mismatch 0.556. AURC 0.026, selective accuracy
-at 80% coverage 0.938 (full coverage 0.900). Mean confidence 0.960 vs accuracy 0.900 (over-confident).
-Cost per post: about 1,287 prompt and 74 completion tokens, 3.83 s, 1 LLM call, 0 search calls.
-One 503 and one 429 occurred during the valid runs; parse_fail stayed at 0.000.
+**Paired bootstrap over posts (2,000 resamples, 95% CI of the difference A minus B):**
+| A vs B | Metric | Difference | 95% CI |
+|---|---|---|---|
+| full vs B2 | 4-way macro-F1 | +0.005 | [-0.060, 0.069] |
+| full vs B2 | binary macro-F1 | -0.023 | [-0.077, 0.029] |
+| full vs no_text | 4-way macro-F1 | +0.036 | [0.001, 0.073] |
+| full vs no_evidence | 4-way macro-F1 | +0.017 | [-0.006, 0.044] |
+| full vs no_image | accuracy | +0.253 | [0.180, 0.327] |
+| full_cal vs full | ECE | +0.004 | [-0.057, 0.064] |
+| full vs B1 | 4-way macro-F1 | -0.080 | [-0.193, 0.035] |
+| full vs B1 | binary macro-F1 | -0.002 | [-0.082, 0.076] |
+| B2 vs B1 | 4-way macro-F1 | -0.085 | [-0.205, 0.034] |
+## 5. Failure analysis
+The full system made 46 four-way errors on 150 posts (30.7%): 27 where no specialist had the right label and 19 where the decision agent overrode a
+correct specialist. Most frequent: mismatch predicted as real (11), mismatch predicted as image_false (8), text_false predicted as image_false (8).
+Two success and two failure trajectories are in `results/agent/failure_cases.md`; category counts are in `results/agent/failure_categories.csv`.
+Sample traces: `logs/sample_traces/`.
 
-**B1 detail.** Binary recall real / fake 0.722 / 0.857, fake precision 0.878. 4-way recall:
-real 0.722, text_false 0.900, image_false 0.733, mismatch 0.589. AURC 0.077, selective accuracy
-at 80% coverage 0.867 (full 0.817). Mean confidence 0.713 vs accuracy 0.817 (under-confident).
-
-**Observations (hypotheses for Phase 2, not conclusions).**
-- Mismatch is the weakest 4-way class for both baselines, which is where evidence and caption-image checks should help.
-- B1 is under-confident and B2 over-confident, so raw confidence is unreliable in both directions (motivates Gap 1). B2's ECE comes from 60 posts and is not evidence that B2 is better calibrated than B1.
-- B1 is trained on part of val, so its score may reflect dataset-construction cues. This is untested.
-
-## 5. Layout
-```
-src/agentverify/
-  contracts.py      Pydantic state: PostInput, AgentVerdict, EvidenceItem, FinalVerdict, CostLog, RunRecord
-  llm.py            OpenAI-compatible client + offline MockClient
-  prompts.py        B2 prompt
-  data/             MMFakeBench loader, fixed splits, synthetic test data
-  baselines/        clip_lr.py (B1), single_vlm.py (B2)
-  tools/search.py   Wikipedia + DuckDuckGo evidence tool, trusted-domain rerank, disk cache
-  perturb.py        label-preserving image/text perturbations (Phase 2, Gap 2)
-  eval/             metrics.py (acc, F1, ECE, Brier, AURC, bootstrap CI), report.py
-scripts/ tests/ docs/ results/
-```
-<!-- TODO: add the Phase 2 modules (agents/, orchestrator, calibration layer, ablation switches) once they exist. -->
-
-## 6. Gap-resolution table (filled in with E4 results)
-
+## 6. Gap-resolution table
 | Gap | Method / component | Metric | Base paper result | Our result | Addressed? |
 |---|---|---|---|---|---|
-| Gap 1: calibration | Calibration layer + abstention | ECE, Brier, AURC, accuracy at 80% coverage | not reported (T2Agent) | pending | pending |
-| Gap 2: robustness | Seeded label-preserving perturbation suite | delta macro-F1, delta ECE, label-flip rate at severity 3 | not reported | pending | pending |
-| Gap 3: agent contribution and cost | Leave-one-agent-out switches + cost logger | per-class recall, macro-F1, USD per 1k posts | ablates search/tools only; about 5x cost | pending | pending |
+| 1. Calibration | Platt scaling of the verdict confidence (60-post calibration set) | ECE, Brier | not reported (T2Agent) | ECE 0.106 vs 0.102 raw (diff +0.004, CI [-0.057, 0.064]); B2 0.096 | **Not** |
+| 2. Robustness | Seeded JPEG and caption-typo perturbations | Binary/4-way macro-F1, ECE, prediction flip rate | not reported | n=60: full-system typo flip rate 20% vs B2 5%; full binary F1 change -0.073 vs B2 +0.049. JPEG flip rates 8.3% vs 6.7%. | Partially |
 
-## 6b. Experiments
+**Robustness results (n=60 per condition, one run)**
 
-| ID | What | Command | Output | Status |
-|---|---|---|---|---|
-| E1 | B1 baseline | `python scripts/run_b1_clip_valonly.py` | `results/` | done on val only; re-run on D_train |
-| E2 | Base paper | published numbers only (not re-implemented) | n/a | taken from paper |
-| E3 | Full agentic system | TODO | TODO | pending |
-| E4 | Gap-wise experiments | TODO | TODO | pending |
-| E5 | Ablation (one component removed at a time) | TODO | TODO | pending |
-| E6 | Cost, latency, reliability | TODO | TODO | pending |
+| Config | Condition | Binary macro-F1 | 4-way macro-F1 | ECE | Binary flip vs clean | 4-way flip vs clean |
+|---|---|---:|---:|---:|---:|---:|
+| B2 | Clean | 0.821 | 0.537 | 0.131 | 0% | 0% |
+| B2 | JPEG3 | 0.817 | 0.571 | 0.122 | 6.7% | 11.7% |
+| B2 | Typos3 | 0.870 | 0.533 | 0.075 | 5% | 11.7% |
+| Full | Clean | 0.817 | 0.539 | 0.133 | 0% | 0% |
+| Full | JPEG3 | 0.791 | 0.594 | 0.121 | 8.3% | 11.7% |
+| Full | Typos3 | 0.744 | 0.474 | 0.125 | 20% | 26.7% |
+The robustness experiment used one run on 60 test-derived posts (D_rob), separate from the 150-post validation sample (D_val). These results are suggestive and should not be treated as conclusive evidence of general robustness.
+| 3. Agent contribution and cost | leave-one-agent-out switches and a cost log | per-class recall, macro-F1, tokens, latency | ablates search/tools only; about 5x cost | image agent dominant (4-way F1 -0.328 without it); text +0.036 (CI [0.001, 0.073]); evidence not significant; 1.9x tokens and 2.9x latency vs B2 | **Fully** (analysis; no accuracy gain over B2) |
 
-## 6c. Status
-- [x] pipeline, contracts, provider layer, evidence tool, perturbations, metrics, tests (15 pass)
-- [x] B1 and B2 implemented; offline smoke test passes
-- [x] B1 on 300 held-out val posts (val-only protocol)
-- [x] B2 on a 60-post stratified val sample (Gemini 3.5 Flash-Lite, parse_fail = 0.000)
-- [ ] B2 on the full 1,000-post val set
-- [ ] B1 re-run on D_train / D_val with no overlap
-- [ ] hand-check a sample of perturbations to confirm labels are preserved (for example crops that remove the manipulated region)
-- [ ] text, image, evidence and decision agents, calibration layer, robustness and ablation runs
-- [ ] T2Agent comparison on a small GPT-4o-mini subset
+## 7. Repository layout
+```
+src/agentverify/
+  contracts.py        shared state: PostInput, AgentVerdict, EvidenceItem, FinalVerdict, CostLog, RunRecord
+  llm.py, config.py   OpenAI-compatible client, mock client, env config
+  prompts.py          B2 prompt
+  agents/             text_agent, image_agent, evidence_agent, decision_agent, orchestrator (ablation switches), common (cache, rate limit)
+  calibration.py      Platt scaling
+  robustness.py       label-safe perturbed copies of posts (new post_id)
+  perturb.py          image / text perturbations
+  tools/search.py     Wikipedia + DuckDuckGo evidence tool with trusted-domain rerank and disk cache
+  baselines/          clip_lr.py (B1), single_vlm.py (B2)
+  data/, eval/        loader and splits; metrics (acc, F1, ECE, Brier, AURC, bootstrap CI)
+scripts/ tests/ docs/ results/ logs/
+```
+`docs/devlog.md` records each failure, change and measured effect. `docs/STATE_AND_CONTRACTS.md` describes the state and agent contracts.
 
-## 7. Team responsibilities
-
+## 8. Team responsibilities
 | Member | Roll no. | Responsibilities |
 |---|---|---|
-| Dayyan Mustafa | 23i-0702 | TODO |
-| Muhammad Adeel | 23i-0739 | TODO |
-| Abdul Hadi | 23i-0707 | TODO |
+| Dayan Mustafa (group head) | 23i-0702 | Phase 1 foundation (scaffolding, loader, baselines, metrics); `evidence_agent.py`, `decision_agent.py`, `agents/common.py` |
+| Abdul Hadi | 23i-0707 | `text_agent.py`, `image_agent.py`, `orchestrator.py` |
+| Muhammad Adeel | 23i-0739 | remaining work: calibration, run / merge / bootstrap / failure-analysis / robustness scripts, tests, results and documentation |
 
 Each member commits their own work from their own GitHub account.
+
+## 9. Limitations
+- 150 evaluation posts: confidence intervals are wide and most differences between B2, the full system and the ablations are within noise.
+- One run per configuration (temperature 0 plus caching); no repeated-run standard deviation.
+- T2Agent numbers are published, on a different backbone and a different sample; not reproduced.
+- The evidence agent sees only the caption, so it cannot detect image-side or mismatch errors; retrieval relevance was not measured.
+- Free-tier API: val images and captions are sent to an external service; web search results change over time (hence the cache snapshot).
+- The calibration set has only 60 posts.

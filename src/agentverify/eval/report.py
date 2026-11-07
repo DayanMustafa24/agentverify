@@ -11,12 +11,12 @@ from .metrics import compute_all, reliability_bins
 
 
 def read_records(path: str | Path) -> list[RunRecord]:
-    return [RunRecord.model_validate_json(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    return [RunRecord.model_validate_json(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def write_records(path: str | Path, records: list[RunRecord]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for r in records:
             f.write(r.model_dump_json() + "\n")
 

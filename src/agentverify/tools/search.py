@@ -36,13 +36,19 @@ def is_trusted(url: str) -> bool:
 def rerank_by_trust(items: list[EvidenceItem]) -> list[EvidenceItem]:
     return sorted(items, key=lambda e: (not e.trusted,))  # stable: trusted first, original order kept
 
-
 def wikipedia_backend(query: str, k: int) -> list[dict]:
-    r = requests.get("https://en.wikipedia.org/w/api.php", timeout=15,
-                     headers={"User-Agent": "agentverify-student-project/0.1"},
-                     params={"action": "query", "list": "search", "srsearch": query,
-                             "srlimit": k, "format": "json"})
-    r.raise_for_status()
+    import time
+    headers = {"User-Agent": "agentverify-student-project/0.1 (YOUR_EMAIL@example.com)"}
+    params = {"action": "query", "list": "search", "srsearch": query,
+              "srlimit": k, "format": "json"}
+    for attempt in range(3):
+        r = requests.get("https://en.wikipedia.org/w/api.php", timeout=15,
+                         headers=headers, params=params)
+        if r.status_code == 429:
+            time.sleep(2 * (attempt + 1))
+            continue
+        r.raise_for_status()
+        break
     out = []
     for h in r.json()["query"]["search"]:
         title = h["title"]
@@ -77,10 +83,11 @@ class EvidenceTool:
         else:
             try:
                 raw = self.backends[backend](query, self.k)
-            except Exception:
+                p.write_text(json.dumps(raw))
+                cost.search_calls += 1
+            except Exception as e:
+                print(f"[search error] {backend}: {type(e).__name__}: {str(e)[:150]}", flush=True)
                 raw = []
-            p.write_text(json.dumps(raw))
-            cost.search_calls += 1
         items = [EvidenceItem(query=query, title=x["title"], url=x["url"], snippet=x["snippet"],
                               domain=domain_of(x["url"]), trusted=is_trusted(x["url"])) for x in raw]
         return rerank_by_trust(items), cost

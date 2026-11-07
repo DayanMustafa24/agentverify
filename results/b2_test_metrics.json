@@ -1,0 +1,37 @@
+{
+  "n": 4,
+  "parse_fail_rate": 0.0,
+  "binary": {
+    "accuracy": 0.75,
+    "macro_f1": 0.7333333333333334,
+    "per_class_recall": {
+      "real": 1.0,
+      "fake": 0.6666666666666666
+    },
+    "fake_precision": 1.0
+  },
+  "four_way": {
+    "accuracy": 0.75,
+    "macro_f1": 0.6666666666666666,
+    "per_class_recall": {
+      "real": 1.0,
+      "text_false": 1.0,
+      "image_false": 1.0,
+      "mismatch": 0.0
+    }
+  },
+  "calibration": {
+    "ece_15bins": 0.2625000000000001,
+    "brier": 0.20437500000000003,
+    "aurc": 0.0625,
+    "selective_acc_at_80_coverage": 0.75,
+    "mean_confidence": 0.9374999999999999
+  },
+  "cost": {
+    "prompt_tokens_per_post": 1291.75,
+    "completion_tokens_per_post": 69.75,
+    "latency_s_per_post": 4.012579381465912,
+    "llm_calls_per_post": 1.0,
+    "search_calls_per_post": 0.0
+  }
+}

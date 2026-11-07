@@ -1,0 +1,45 @@
+{
+  "n": 150,
+  "parse_fail_rate": 0.0,
+  "binary": {
+    "accuracy": 0.8533333333333334,
+    "macro_f1": 0.8366013071895424,
+    "per_class_recall": {
+      "real": 0.8888888888888888,
+      "fake": 0.8380952380952381
+    },
+    "fake_precision": 0.946236559139785,
+    "macro_f1_ci95": [
+      0.7740377123266324,
+      0.8942552895611576
+    ]
+  },
+  "four_way": {
+    "accuracy": 0.66,
+    "macro_f1": 0.6366541803689265,
+    "per_class_recall": {
+      "real": 0.8888888888888888,
+      "text_false": 0.5555555555555556,
+      "image_false": 0.8666666666666667,
+      "mismatch": 0.4666666666666667
+    }
+  },
+  "calibration": {
+    "ece_15bins": 0.10279999999999997,
+    "brier": 0.13115866666666667,
+    "aurc": 0.07922414146779849,
+    "selective_acc_at_80_coverage": 0.875,
+    "mean_confidence": 0.9534666666666666,
+    "ece_ci95": [
+      0.05632666666666665,
+      0.16073666666666644
+    ]
+  },
+  "cost": {
+    "prompt_tokens_per_post": 2111.9333333333334,
+    "completion_tokens_per_post": 220.11333333333334,
+    "latency_s_per_post": 7.467507416407267,
+    "llm_calls_per_post": 3.993333333333333,
+    "search_calls_per_post": 0.14666666666666667
+  }
+}

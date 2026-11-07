@@ -1,0 +1,13 @@
+gold -> predicted,cause,count,share_of_errors
+mismatch -> real,all specialists wrong,11,0.239
+text_false -> image_false,decision overrode a correct specialist,8,0.174
+mismatch -> image_false,all specialists wrong,8,0.174
+real -> mismatch,decision overrode a correct specialist,3,0.065
+text_false -> mismatch,decision overrode a correct specialist,3,0.065
+mismatch -> text_false,all specialists wrong,3,0.065
+real -> image_false,decision overrode a correct specialist,2,0.043
+real -> text_false,decision overrode a correct specialist,2,0.043
+text_false -> real,all specialists wrong,2,0.043
+image_false -> real,all specialists wrong,2,0.043
+text_false -> image_false,all specialists wrong,1,0.022
+mismatch -> real,decision overrode a correct specialist,1,0.022

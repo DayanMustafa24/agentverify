@@ -4,13 +4,13 @@ data/cache/
 *.zip
 # secrets
 .env
+# large per-post outputs (captions of the dataset); summary csv/json/md files ARE committed
+results/**/*.jsonl
+results/*.jsonl
+logs/traces/
 # python
 __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
 .venv/
-# results: keep only small summary files
-results/*
-!results/.gitkeep
-!results/smoke/
